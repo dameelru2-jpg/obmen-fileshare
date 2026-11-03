@@ -61,6 +61,46 @@ const upload = multer({
 
 const app = express();
 app.use(express.json());
+
+// --- пароль доступа (password.txt / --password / env OBMEN_PASSWORD) ---
+const crypto2 = crypto;
+const PASSWORD_PATH = path.join(ROOT, 'password.txt');
+let PASSWORD = process.env.OBMEN_PASSWORD || '';
+{
+  const i = process.argv.indexOf('--password');
+  if (i !== -1 && process.argv[i + 1]) PASSWORD = process.argv[i + 1];
+}
+if (!PASSWORD && fs.existsSync(PASSWORD_PATH)) PASSWORD = fs.readFileSync(PASSWORD_PATH, 'utf8').trim();
+if (!PASSWORD) {
+  PASSWORD = crypto2.randomBytes(9).toString('base64url');
+  fs.writeFileSync(PASSWORD_PATH, PASSWORD + '\n', 'utf8');
+}
+const AUTH_TOKEN = crypto2.createHmac('sha256', PASSWORD).update('obmen-auth-v1').digest('hex');
+
+function authed(req) {
+  const m = /(?:^|;\s*)obmen_auth=([0-9a-f]{64})/.exec(req.headers.cookie || '');
+  return !!m && crypto2.timingSafeEqual(Buffer.from(m[1]), Buffer.from(AUTH_TOKEN));
+}
+
+// страница входа и её ресурсы — без авторизации
+app.use((req, res, next) => {
+  const p = req.path;
+  const isPublic = p === '/login.html' || p === '/styles.css' || p === '/favicon.ico' ||
+    p.startsWith('/fonts/') || p === '/api/login';
+  if (isPublic || authed(req)) return next();
+  if (p.startsWith('/api/')) return res.status(401).json({ error: 'Требуется вход' });
+  res.redirect('/login.html');
+});
+
+app.post('/api/login', (req, res) => {
+  const pw = String((req.body || {}).password || '');
+  const h = (s) => crypto2.createHash('sha256').update(s, 'utf8').digest();
+  if (pw && crypto2.timingSafeEqual(h(pw), h(PASSWORD))) {
+    res.setHeader('Set-Cookie', 'obmen_auth=' + AUTH_TOKEN + '; Path=/; HttpOnly; SameSite=Lax');
+    return res.json({ ok: true });
+  }
+  setTimeout(() => res.status(401).json({ error: 'Неверный пароль' }), 700);
+});
 app.use(express.static(path.join(ROOT, 'public')));
 
 app.get('/api/groups', (req, res) => {
@@ -191,5 +231,6 @@ app.listen(PORT, HOST, () => {
   console.log(`\nФайлообменник запущен:`);
   console.log(`  на этом компьютере:  http://localhost:${PORT}`);
   for (const ip of ips) console.log(`  для коллег по сети:  http://${ip}:${PORT}`);
-  console.log('');
+  console.log(`\nПароль для входа:  ${PASSWORD}`);
+  console.log(`(хранится в файле password.txt рядом с программой — можно поменять и перезапустить)\n`);
 });

@@ -6,9 +6,12 @@
 Запуск:  Обмен.exe [--port 7100] [--host 0.0.0.0]
 Коллеги открывают в браузере адрес, который сервер печатает при старте.
 """
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 import threading
@@ -29,11 +32,29 @@ else:
 DATA_DIR = os.path.join(BASE_DIR, 'uploads')
 FILES_DIR = os.path.join(DATA_DIR, 'files')
 META_PATH = os.path.join(DATA_DIR, 'meta.json')
+PASSWORD_PATH = os.path.join(BASE_DIR, 'password.txt')
 
 os.makedirs(FILES_DIR, exist_ok=True)
 if not os.path.exists(META_PATH):
     with open(META_PATH, 'w', encoding='utf-8') as f:
         f.write('[]')
+
+# --- пароль доступа (задаётся в password.txt / --password / env OBMEN_PASSWORD) ---
+PASSWORD = ''
+AUTH_TOKEN = ''
+
+def init_password(cli_pw=None):
+    global PASSWORD, AUTH_TOKEN
+    pw = cli_pw or os.environ.get('OBMEN_PASSWORD')
+    if not pw and os.path.exists(PASSWORD_PATH):
+        with open(PASSWORD_PATH, 'r', encoding='utf-8') as f:
+            pw = f.read().strip()
+    if not pw:
+        pw = secrets.token_urlsafe(9)
+        with open(PASSWORD_PATH, 'w', encoding='utf-8') as f:
+            f.write(pw + '\n')
+    PASSWORD = pw
+    AUTH_TOKEN = hmac.new(pw.encode('utf-8'), b'obmen-auth-v1', hashlib.sha256).hexdigest()
 
 GROUPS = [
     {'id': 'kadry',     'label': 'Кадры'},
@@ -106,11 +127,54 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # тихий сервер
         pass
 
+    # --- авторизация ---
+    def _authed(self):
+        cookie = self.headers.get('Cookie') or ''
+        m = re.search(r'(?:^|;\s*)obmen_auth=([0-9a-f]{64})', cookie)
+        return bool(m) and hmac.compare_digest(m.group(1), AUTH_TOKEN)
+
+    def _redirect_login(self):
+        self.send_response(302)
+        self.send_header('Location', '/login.html')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    # --- вход ---
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path != '/api/login':
+            return self._send_error_json(404, 'Не найдено')
+        length = int(self.headers.get('Content-Length') or 0)
+        body = self.rfile.read(min(length, 4096)) if length else b''
+        try:
+            pw = json.loads(body.decode('utf-8')).get('password', '')
+        except Exception:
+            pw = ''
+        if pw and hmac.compare_digest(str(pw).encode('utf-8'), PASSWORD.encode('utf-8')):
+            body_out = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Set-Cookie', 'obmen_auth=%s; Path=/; HttpOnly; SameSite=Lax' % AUTH_TOKEN)
+            self.send_header('Content-Length', str(len(body_out)))
+            self.end_headers()
+            self.wfile.write(body_out)
+        else:
+            time.sleep(0.7)  # защита от перебора
+            self._send_error_json(401, 'Неверный пароль')
+
     # --- GET ---
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+
+        # публичные пути (страница входа и её ресурсы)
+        public = path in ('/login.html', '/styles.css', '/favicon.ico') or \
+                 path.startswith('/fonts/')
+        if not public and not self._authed():
+            if path.startswith('/api/'):
+                return self._send_error_json(401, 'Требуется вход')
+            return self._redirect_login()
 
         if path == '/api/groups':
             meta = read_meta()
@@ -247,6 +311,7 @@ def main():
         return None
     port = int(os.environ.get('PORT') or arg('port') or 7100)
     host = os.environ.get('HOST') or arg('host') or '0.0.0.0'
+    init_password(arg('password'))
 
     server = QuietServer((host, port), Handler)
     server.daemon_threads = True
@@ -255,6 +320,9 @@ def main():
     print('  на этом компьютере:  http://localhost:%d' % port)
     for ip in lan_ips():
         print('  для коллег по сети:  http://%s:%d' % (ip, port))
+    print()
+    print('Пароль для входа:  %s' % PASSWORD)
+    print('(хранится в файле password.txt рядом с программой — можно поменять и перезапустить)')
     print()
     print('Окно можно свернуть. Чтобы остановить — закройте окно или нажмите Ctrl+C.')
     sys.stdout.flush()

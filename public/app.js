@@ -70,6 +70,7 @@ function toast(text, isError) {
 /* ===== API ===== */
 async function api(path, opts) {
   const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login.html'; throw new Error('Требуется вход'); }
   if (!r.ok) {
     let msg = 'Ошибка ' + r.status;
     try { msg = (await r.json()).error || msg; } catch {}
@@ -200,6 +201,7 @@ function uploadFiles(fileList) {
       if (e.lengthComputable) bar.style.width = Math.round((i + e.loaded / e.total) / total * 100) + '%';
     };
     xhr.onload = () => {
+      if (xhr.status === 401) { location.href = '/login.html'; return; }
       if (xhr.status === 201) { i++; sendNext(); return; }
       let msg = 'Ошибка загрузки';
       try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}

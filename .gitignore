@@ -7,3 +7,4 @@ __pycache__/
 uploads/files/
 uploads/meta.json
 uploads/*.tmp
+password.txt
