@@ -5,8 +5,8 @@
   "description": "Локальный файлообменник для офисной сети",
   "type": "commonjs",
   "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js"
+    "dev": "python server.py || node server.js",
+    "start": "python server.py || node server.js"
   },
   "dependencies": {
     "express": "^4.21.2",

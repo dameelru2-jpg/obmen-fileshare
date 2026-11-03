@@ -20,13 +20,16 @@
       </div>
     </div>
 
-    <nav class="groups" id="groupsNav" aria-label="Группы документов"></nav>
+    <nav class="groups" id="groupsNav" aria-label="Разделы"></nav>
 
     <div class="sidebar-foot">
-      <button class="user-chip" id="userChip" title="Изменить имя">
+      <div class="user-chip" id="userChip" title="">
         <span class="user-avatar" id="userAvatar">—</span>
-        <span class="user-name" id="userName">Гость</span>
-        <svg class="chip-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+        <span class="user-name" id="userName">…</span>
+        <span class="role-badge" id="roleBadge" hidden>admin</span>
+      </div>
+      <button class="icon-btn" id="logoutBtn" title="Выйти" aria-label="Выйти">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
       </button>
       <button class="icon-btn" id="qrBtn" title="QR-код для коллег" aria-label="Показать QR-код адреса">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3z"/><path d="M21 14v.01M14 21v.01M21 21v.01M18 18v.01"/></svg>
@@ -60,12 +63,12 @@
       </div>
     </header>
 
-    <nav class="chips" id="chipsNav" aria-label="Группы"></nav>
+    <nav class="chips" id="chipsNav" aria-label="Разделы"></nav>
 
     <section class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Перетащите файлы сюда или нажмите, чтобы выбрать">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16.6A5 5 0 0 0 18 8h-1.3A7 7 0 1 0 5 15.7"/><path d="M12 12v9"/><path d="m8 16 4-4 4 4"/></svg>
       <p><strong>Перетащите файлы сюда</strong> или нажмите, чтобы выбрать</p>
-      <p class="dz-hint" id="dzHint">Файл появится у всех коллег в этой группе</p>
+      <p class="dz-hint" id="dzHint">Файл появится у всех коллег в этой папке</p>
     </section>
 
     <div class="progress" id="progress" hidden>
@@ -73,19 +76,18 @@
       <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
     </div>
 
-    <section class="files" id="filesList" aria-live="polite"></section>
-  </main>
-</div>
-
-<div class="modal-backdrop" id="nameModal" hidden>
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="nameModalTitle">
-    <h2 id="nameModalTitle">Как вас зовут?</h2>
-    <p class="modal-sub">Имя будет подписано у файлов, которые вы загружаете.</p>
-    <input type="text" id="nameInput" maxlength="60" placeholder="Например, Анна Смирнова" autocomplete="name">
-    <div class="modal-actions">
-      <button class="btn-primary" id="nameSave">Продолжить</button>
+    <div class="bulk-bar" id="bulkBar" hidden>
+      <label class="bulk-all"><input type="checkbox" id="bulkAll"> Все</label>
+      <span id="bulkCount">Выбрано: 0</span>
+      <button class="btn-danger bulk-delete" id="bulkDelete">Удалить выбранные</button>
     </div>
-  </div>
+
+    <section class="files" id="filesList" aria-live="polite"></section>
+
+    <div class="load-more-wrap" id="loadMoreWrap" hidden>
+      <button class="btn-ghost" id="loadMoreBtn">Показать ещё</button>
+    </div>
+  </main>
 </div>
 
 <div class="modal-backdrop" id="confirmModal" hidden>
@@ -96,6 +98,30 @@
       <button class="btn-ghost" id="confirmCancel">Отмена</button>
       <button class="btn-danger" id="confirmOk">Удалить</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="folderModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="folderModalTitle">
+    <h2 id="folderModalTitle">Новая папка</h2>
+    <p class="modal-sub">Папку увидят все коллеги. Создавать и удалять папки может только администратор.</p>
+    <input type="text" id="folderInput" maxlength="60" placeholder="Например, Акты сверки">
+    <div class="modal-actions">
+      <button class="btn-ghost" id="folderCancel">Отмена</button>
+      <button class="btn-primary" id="folderSave">Создать</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="previewModal" hidden>
+  <div class="modal modal-preview" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+    <div class="preview-head">
+      <h2 id="previewTitle">Просмотр</h2>
+      <button class="icon-btn" id="previewClose" aria-label="Закрыть просмотр">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="preview-body" id="previewBody"></div>
   </div>
 </div>
 
@@ -117,6 +143,7 @@
 <div class="toasts" id="toasts" aria-live="assertive"></div>
 
 <script src="vendor/qrcode.js"></script>
+<script src="firework.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

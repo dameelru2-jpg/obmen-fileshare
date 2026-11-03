@@ -5,79 +5,131 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Вход — Обмен</title>
 <link rel="stylesheet" href="styles.css">
-<style>
-  .login-wrap { min-height: 100dvh; display: grid; place-items: center; padding: 20px; }
-  .login-card {
-    width: 100%; max-width: 360px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 16px; padding: 28px 24px;
-    box-shadow: var(--shadow); text-align: center;
-    animation: pop-in 180ms ease;
-  }
-  .login-mark {
-    width: 48px; height: 48px; border-radius: 14px; margin: 0 auto 14px;
-    background: var(--accent-soft); color: var(--accent);
-    display: grid; place-items: center;
-  }
-  .login-mark svg { width: 26px; height: 26px; }
-  .login-card h1 { margin: 0 0 6px; font-size: 20px; font-weight: 800; }
-  .login-card p { margin: 0 0 18px; color: var(--text-muted); font-size: 13.5px; }
-  .login-card input {
-    width: 100%; height: 44px; border-radius: 10px; text-align: center;
-    border: 1px solid var(--border); background: var(--bg);
-    padding: 0 12px; outline: none; margin-bottom: 12px; font-size: 15px;
-    transition: border-color 150ms ease;
-  }
-  .login-card input:focus { border-color: var(--accent); }
-  .login-card .btn-primary { width: 100%; justify-content: center; height: 44px; }
-  .login-error { color: var(--danger); font-size: 13px; font-weight: 600; min-height: 20px; margin-bottom: 4px; }
-  .shake { animation: shake 300ms ease; }
-  @keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-6px); }
-    75% { transform: translateX(6px); }
-  }
-</style>
 </head>
-<body>
-<div class="login-wrap">
-  <form class="login-card" id="loginForm">
-    <div class="login-mark">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+<body class="login-body">
+<div class="login-card">
+  <div class="brand login-brand">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="m3 8 2.4-4.2A2 2 0 0 1 7.1 3h9.8a2 2 0 0 1 1.7.8L21 8Z"/><path d="M3 8h18"/><path d="M12 12v6"/><path d="m9 15 3 3 3-3"/></svg>
     </div>
-    <h1>Обмен</h1>
-    <p>Файлы офиса. Введите пароль, который сообщил администратор.</p>
-    <div class="login-error" id="loginError"></div>
-    <input type="password" id="pwInput" placeholder="Пароль" autocomplete="current-password" autofocus>
-    <button type="submit" class="btn-primary" id="loginBtn">Войти</button>
+    <div>
+      <div class="brand-name">Обмен</div>
+      <div class="brand-sub">файлы офиса</div>
+    </div>
+  </div>
+
+  <div class="login-tabs" role="tablist">
+    <button class="login-tab active" id="tabLogin" role="tab" aria-selected="true">Вход</button>
+    <button class="login-tab" id="tabRegister" role="tab" aria-selected="false">Регистрация</button>
+  </div>
+
+  <form id="formLogin" autocomplete="on">
+    <label class="field">
+      <span>Ник</span>
+      <input type="text" id="loginUser" maxlength="40" autocomplete="username" required>
+    </label>
+    <label class="field">
+      <span>Пароль</span>
+      <input type="password" id="loginPass" autocomplete="current-password" required>
+    </label>
+    <button class="btn-primary login-submit" type="submit" id="loginSubmit">Войти</button>
   </form>
+
+  <form id="formRegister" hidden autocomplete="on">
+    <label class="field">
+      <span>Ник</span>
+      <input type="text" id="regUser" maxlength="40" autocomplete="username" placeholder="Например, Анна Смирнова">
+    </label>
+    <label class="field">
+      <span>Пароль (минимум 6 символов)</span>
+      <input type="password" id="regPass" autocomplete="new-password" minlength="6">
+    </label>
+    <label class="field">
+      <span>Пароль-приглашение <em>(спросите у коллег)</em></span>
+      <input type="password" id="regInvite" autocomplete="off">
+    </label>
+    <button class="btn-primary login-submit" type="submit" id="regSubmit">Создать аккаунт</button>
+  </form>
+
+  <p class="login-error" id="loginError" role="alert" hidden></p>
+  <p class="login-hint">Ник привязывается к вашим файлам — никто не сможет выдать себя за вас или удалить чужой файл.</p>
 </div>
+
 <script>
 (function () {
-  var form = document.getElementById('loginForm');
-  var input = document.getElementById('pwInput');
-  var err = document.getElementById('loginError');
-  var btn = document.getElementById('loginBtn');
-  form.addEventListener('submit', async function (e) {
-    e.preventDefault();
-    err.textContent = '';
+  'use strict';
+  var tabLogin = document.getElementById('tabLogin');
+  var tabRegister = document.getElementById('tabRegister');
+  var formLogin = document.getElementById('formLogin');
+  var formRegister = document.getElementById('formRegister');
+  var errBox = document.getElementById('loginError');
+
+  function showErr(msg) {
+    errBox.textContent = msg;
+    errBox.hidden = !msg;
+  }
+
+  function switchTab(login) {
+    tabLogin.classList.toggle('active', login);
+    tabRegister.classList.toggle('active', !login);
+    tabLogin.setAttribute('aria-selected', String(login));
+    tabRegister.setAttribute('aria-selected', String(!login));
+    formLogin.hidden = !login;
+    formRegister.hidden = login;
+    showErr('');
+    (login ? document.getElementById('loginUser') : document.getElementById('regUser')).focus();
+  }
+  tabLogin.addEventListener('click', function () { switchTab(true); });
+  tabRegister.addEventListener('click', function () { switchTab(false); });
+
+  function submit(url, payload, btn) {
     btn.disabled = true;
-    try {
-      var r = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: input.value })
-      });
-      if (r.ok) { location.href = '/'; return; }
-      var d = await r.json().catch(function () { return {}; });
-      err.textContent = d.error || 'Ошибка входа';
-      form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake');
-      input.select();
-    } catch {
-      err.textContent = 'Сервер недоступен';
-    } finally {
+    showErr('');
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(payload),
+      credentials: 'same-origin'
+    }).then(function (r) {
+      return r.json().then(function (d) { return { status: r.status, data: d }; });
+    }).then(function (res) {
+      if (res.status === 200 && res.data.ok) {
+        try { sessionStorage.setItem('obmen_csrf', res.data.csrf || ''); } catch (e) {}
+        location.href = '/';
+        return;
+      }
+      showErr(res.data.error || 'Ошибка (' + res.status + ')');
       btn.disabled = false;
-    }
+    }).catch(function () {
+      showErr('Сеть недоступна. Проверьте, что сервер запущен.');
+      btn.disabled = false;
+    });
+  }
+
+  formLogin.addEventListener('submit', function (e) {
+    e.preventDefault();
+    submit('/api/login', {
+      username: document.getElementById('loginUser').value.trim(),
+      password: document.getElementById('loginPass').value
+    }, document.getElementById('loginSubmit'));
   });
+
+  formRegister.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var u = document.getElementById('regUser').value.trim();
+    var p = document.getElementById('regPass').value;
+    if (u.length < 2) { showErr('Ник — минимум 2 символа'); return; }
+    if (p.length < 6) { showErr('Пароль — минимум 6 символов'); return; }
+    submit('/api/register', {
+      username: u, password: p,
+      invite: document.getElementById('regInvite').value
+    }, document.getElementById('regSubmit'));
+  });
+
+  // уже вошли — сразу в приложение
+  fetch('/api/me', { credentials: 'same-origin' }).then(function (r) {
+    if (r.ok) location.href = '/';
+  }).catch(function () {});
 })();
 </script>
 </body>

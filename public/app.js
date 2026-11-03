@@ -1,358 +1,574 @@
-'use strict';
+/* Обмен — файлообменник офиса. Клиент v2.
+   Аккаунты, папки, превью, поиск, массовое удаление, 8-битный салют. */
+(function () {
+  'use strict';
 
-/* ===== Состояние ===== */
-const state = {
-  groups: [],
-  currentGroup: localStorage.getItem('lan-share-group') || 'kadry',
-  files: [],
-  search: '',
-  userName: localStorage.getItem('lan-share-name') || '',
-};
+  // ---------- состояние ----------
+  var state = {
+    me: null,              // {username, role, csrf}
+    folders: [],           // [{id, name, count}]
+    rootCount: 0,
+    view: { kind: 'all', id: null },   // all | root | folder | mine
+    q: '',
+    page: 1,
+    files: [],
+    hasMore: false,
+    total: 0,
+    selection: {}          // id -> true (для «Мои файлы»)
+  };
 
-const GROUP_META = {
-  kadry:     { desc: 'Приказы, личные дела, штатное расписание', icon: 'users' },
-  otpusk:    { desc: 'Заявления и графики отпусков',             icon: 'calendar' },
-  bolnichny: { desc: 'Листки нетрудоспособности',                icon: 'med' },
-  zarplata:  { desc: 'Ведомости, расчётные листы, премии',       icon: 'money' },
-  ndfl:      { desc: 'Справки 2-НДФЛ, декларации, вычеты',       icon: 'percent' },
-  drugie:    { desc: 'Прочие рабочие документы',                 icon: 'folder' },
-};
+  var $ = function (id) { return document.getElementById(id); };
+  var groupsNav = $('groupsNav'), chipsNav = $('chipsNav'), filesList = $('filesList');
 
-const ICONS = {
-  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="3.5"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/><path d="M15.5 3.6a3.5 3.5 0 0 1 0 6.8"/></svg>',
-  calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="m9 15 2 2 4-4"/></svg>',
-  med: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12.6 12 20l-7.5-7.4A5 5 0 1 1 12 6.2a5 5 0 1 1 7.5 6.4Z"/><path d="M3.5 12h4l1.5-2.5 2.5 5 1.5-2.5h4"/></svg>',
-  money: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 12h.01M18 12h.01"/></svg>',
-  percent: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 5 5 19"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/></svg>',
-  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
-  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/></svg>',
-  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12"/><path d="m6 10 6 6 6-6"/><path d="M4 20h16"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
-};
-
-const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-/* ===== Утилиты ===== */
-function fmtSize(bytes) {
-  if (bytes < 1024) return bytes + ' Б';
-  if (bytes < 1024 ** 2) return (bytes / 1024).toFixed(1).replace('.0', '') + ' КБ';
-  if (bytes < 1024 ** 3) return (bytes / 1024 ** 2).toFixed(1).replace('.0', '') + ' МБ';
-  return (bytes / 1024 ** 3).toFixed(2).replace('.00', '') + ' ГБ';
-}
-function fmtTime(ts) {
-  const d = new Date(ts), now = new Date();
-  const diff = (now - d) / 1000;
-  if (diff < 60) return 'только что';
-  if (diff < 3600) { const m = Math.floor(diff / 60); return m + ' ' + plural(m, 'минуту', 'минуты', 'минут') + ' назад'; }
-  const sameDay = d.toDateString() === now.toDateString();
-  const hm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  if (sameDay) return 'сегодня, ' + hm;
-  const y = new Date(now); y.setDate(now.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return 'вчера, ' + hm;
-  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) + ', ' + hm;
-}
-function plural(n, one, few, many) {
-  const m10 = n % 10, m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
-  return many;
-}
-function toast(text, isError) {
-  const el = document.createElement('div');
-  el.className = 'toast' + (isError ? ' error' : '');
-  el.textContent = text;
-  $('#toasts').appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 200ms'; }, 3200);
-  setTimeout(() => el.remove(), 3600);
-}
-
-/* ===== API ===== */
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  if (r.status === 401) { location.href = '/login.html'; throw new Error('Требуется вход'); }
-  if (!r.ok) {
-    let msg = 'Ошибка ' + r.status;
-    try { msg = (await r.json()).error || msg; } catch {}
-    throw new Error(msg);
+  // ---------- утилиты ----------
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
   }
-  return r.json();
-}
-
-async function loadGroups() {
-  state.groups = await api('/api/groups');
-  renderGroups();
-}
-async function loadFiles(silent) {
-  try {
-    const files = await api('/api/files?group=' + state.currentGroup);
-    const changed = JSON.stringify(files) !== JSON.stringify(state.files);
-    state.files = files;
-    if (changed || !silent) renderFiles();
-  } catch (e) {
-    if (!silent) toast(e.message, true);
+  function fmtSize(n) {
+    if (n < 1024) return n + ' Б';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1).replace('.0', '') + ' КБ';
+    if (n < 1024 * 1024 * 1024) return (n / 1048576).toFixed(1).replace('.0', '') + ' МБ';
+    return (n / 1073741824).toFixed(2).replace(/\.?0+$/, '') + ' ГБ';
   }
-}
-
-/* ===== Рендер ===== */
-function renderGroups() {
-  const nav = $('#groupsNav');
-  nav.innerHTML = state.groups.map(g => `
-    <button class="group-btn ${g.id === state.currentGroup ? 'active' : ''}" data-group="${g.id}">
-      ${ICONS[GROUP_META[g.id]?.icon] || ICONS.folder}
-      <span class="group-label">${esc(g.label)}</span>
-      <span class="group-count">${g.count}</span>
-    </button>`).join('');
-
-  const chips = $('#chipsNav');
-  chips.innerHTML = state.groups.map(g => `
-    <button class="chip ${g.id === state.currentGroup ? 'active' : ''}" data-group="${g.id}">
-      ${esc(g.label)} · ${g.count}
-    </button>`).join('');
-
-  const meta = state.groups.find(g => g.id === state.currentGroup);
-  $('#groupTitle').textContent = meta ? meta.label : '—';
-  $('#groupDesc').textContent = GROUP_META[state.currentGroup]?.desc || '';
-}
-
-function renderFiles() {
-  const q = state.search.trim().toLowerCase();
-  const list = q
-    ? state.files.filter(f => f.name.toLowerCase().includes(q) || f.uploader.toLowerCase().includes(q))
-    : state.files;
-  const box = $('#filesList');
-
-  if (!list.length) {
-    const label = state.groups.find(g => g.id === state.currentGroup)?.label || '';
-    box.innerHTML = `<div class="empty">
-      <div class="empty-title">${q ? 'Ничего не найдено' : 'Пока пусто'}</div>
-      <p>${q ? 'Попробуйте изменить запрос.' : 'Загрузите первый файл в группу «' + esc(label) + '» — он сразу появится у всех.'}</p>
-    </div>`;
-    return;
+  function fmtDate(ms) {
+    var d = new Date(ms);
+    var now = new Date();
+    var sameDay = d.toDateString() === now.toDateString();
+    var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    if (sameDay) return 'сегодня ' + hm;
+    return ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + d.getFullYear() + ' ' + hm;
+  }
+  function extOf(name) {
+    var m = /\.([A-Za-z0-9]{1,8})$/.exec(name);
+    return m ? m[1].toLowerCase() : '';
+  }
+  function toast(msg, isErr) {
+    var box = $('toasts');
+    var el = document.createElement('div');
+    el.className = 'toast' + (isErr ? ' error' : '');
+    el.textContent = msg;
+    box.appendChild(el);
+    setTimeout(function () { el.remove(); }, 3400);
   }
 
-  box.innerHTML = list.map(f => {
-    const ext = (f.name.split('.').pop() || '').slice(0, 5);
-    const own = f.uploader === state.userName;
-    return `<div class="file-row" data-id="${f.id}">
-      <div class="file-icon">${ICONS.file}${ext && ext.length < f.name.length ? `<span class="file-ext">${esc(ext)}</span>` : ''}</div>
-      <div class="file-info">
-        <div class="file-name" title="${esc(f.name)}">${esc(f.name)}</div>
-        <div class="file-meta">
-          <span>${esc(f.uploader)}</span><span class="dot">${fmtSize(f.size)}</span><span class="dot">${fmtTime(f.uploadedAt)}</span>
-        </div>
-      </div>
-      <div class="file-actions">
-        <a class="action-btn download" href="/api/files/${f.id}/download" download title="Скачать на компьютер">${ICONS.download}<span>Скачать</span></a>
-        ${own ? `<button class="action-btn delete" data-del="${f.id}" title="Удалить">${ICONS.trash}<span>Удалить</span></button>` : ''}
-      </div>
-    </div>`;
-  }).join('');
-}
+  // ---------- API ----------
+  function api(method, path, body) {
+    var opts = { method: method, credentials: 'same-origin', headers: {} };
+    if (state.me && state.me.csrf) opts.headers['X-CSRF-Token'] = state.me.csrf;
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json; charset=utf-8';
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(path, opts).then(function (r) {
+      if (r.status === 401 && path !== '/api/me') { location.href = '/login.html'; throw new Error('unauthorized'); }
+      return r.json().then(function (d) {
+        if (!r.ok) { var e = new Error(d.error || ('Ошибка ' + r.status)); e.status = r.status; throw e; }
+        return d;
+      });
+    });
+  }
 
-function renderUser() {
-  const name = state.userName || 'Гость';
-  $('#userName').textContent = name;
-  const initials = name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
-  $('#userAvatar').textContent = initials || '—';
-}
+  // ---------- тема ----------
+  function initTheme() {
+    var t = null;
+    try { t = localStorage.getItem('obmen_theme'); } catch (e) {}
+    if (t) document.documentElement.setAttribute('data-theme', t);
+    $('themeToggle').addEventListener('click', function () {
+      var cur = document.documentElement.getAttribute('data-theme') === 'dark' ? '' : 'dark';
+      if (cur) document.documentElement.setAttribute('data-theme', cur);
+      else document.documentElement.removeAttribute('data-theme');
+      try { localStorage.setItem('obmen_theme', cur); } catch (e) {}
+    });
+  }
 
-/* ===== Группа ===== */
-function selectGroup(id) {
-  state.currentGroup = id;
-  localStorage.setItem('lan-share-group', id);
-  state.files = [];
-  renderGroups();
-  renderFiles();
-  loadFiles();
-}
+  // ---------- навигация (папки) ----------
+  var SECTION_ICONS = {
+    all: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>',
+    mine: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>',
+    root: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z"/><path d="M13 3v7h7"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>'
+  };
 
-/* ===== Загрузка ===== */
-function ensureName(then) {
-  if (state.userName) return then();
-  openNameModal(then);
-}
+  function navItems() {
+    var items = [
+      { kind: 'all', id: null, label: 'Все файлы', icon: SECTION_ICONS.all },
+      { kind: 'mine', id: null, label: 'Мои файлы', icon: SECTION_ICONS.mine }
+    ];
+    state.folders.forEach(function (f) {
+      items.push({ kind: 'folder', id: f.id, label: f.name, icon: SECTION_ICONS.folder, count: f.count, folder: true });
+    });
+    items.push({ kind: 'root', id: null, label: 'Без папки', icon: SECTION_ICONS.root, count: state.rootCount });
+    return items;
+  }
 
-function uploadFiles(fileList) {
-  const files = [...fileList];
-  if (!files.length) return;
-  const prog = $('#progress'), bar = $('#progressBar'), label = $('#progressLabel');
-  prog.hidden = false; bar.style.width = '0%';
-  $('#uploadBtn').disabled = true;
-  const total = files.length;
-  let i = 0;
+  function renderNav() {
+    var items = navItems();
+    var html = '';
+    items.forEach(function (it) {
+      var active = state.view.kind === it.kind && state.view.id === it.id;
+      html += '<button class="group-btn' + (active ? ' active' : '') + '" data-kind="' + it.kind + '" data-id="' + (it.id || '') + '">'
+        + it.icon
+        + '<span class="group-label">' + esc(it.label) + '</span>'
+        + (it.count !== undefined ? '<span class="group-count">' + it.count + '</span>' : '')
+        + (it.folder && state.me && state.me.role === 'admin'
+            ? '<span class="folder-del" data-del-folder="' + it.id + '" title="Удалить папку" role="button" aria-label="Удалить папку ' + esc(it.label) + '">×</span>' : '')
+        + '</button>';
+    });
+    if (state.me && state.me.role === 'admin') {
+      html += '<button class="group-btn folder-add" id="addFolderBtn">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
+        + '<span class="group-label">Новая папка</span></button>';
+    }
+    groupsNav.innerHTML = html;
 
-  function sendNext() {
-    if (i >= total) {
-      prog.hidden = true; $('#uploadBtn').disabled = false;
-      toast(total === 1 ? 'Файл загружен и доступен коллегам' : 'Загружено файлов: ' + total);
-      loadGroups(); loadFiles(true);
+    // мобильные чипы
+    var chips = '';
+    items.forEach(function (it) {
+      var active = state.view.kind === it.kind && state.view.id === it.id;
+      chips += '<button class="chip' + (active ? ' active' : '') + '" data-kind="' + it.kind + '" data-id="' + (it.id || '') + '">'
+        + esc(it.label) + (it.count !== undefined ? ' · ' + it.count : '') + '</button>';
+    });
+    chipsNav.innerHTML = chips;
+
+    groupsNav.querySelectorAll('.group-btn[data-kind]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        if (e.target.closest('.folder-del')) return;
+        selectView(b.getAttribute('data-kind'), b.getAttribute('data-id') || null);
+      });
+    });
+    chipsNav.querySelectorAll('.chip').forEach(function (b) {
+      b.addEventListener('click', function () {
+        selectView(b.getAttribute('data-kind'), b.getAttribute('data-id') || null);
+      });
+    });
+    groupsNav.querySelectorAll('[data-del-folder]').forEach(function (x) {
+      x.addEventListener('click', function (e) {
+        e.stopPropagation();
+        askDeleteFolder(x.getAttribute('data-del-folder'));
+      });
+    });
+    var addBtn = $('addFolderBtn');
+    if (addBtn) addBtn.addEventListener('click', function () { openModal('folderModal'); $('folderInput').focus(); });
+  }
+
+  function viewTitle() {
+    var v = state.view;
+    if (v.kind === 'all') return ['Все файлы', 'Всё, что загрузили коллеги'];
+    if (v.kind === 'mine') return ['Мои файлы', 'Загруженные вами — можно выделить и удалить'];
+    if (v.kind === 'root') return ['Без папки', 'Файлы вне папок'];
+    var f = state.folders.filter(function (x) { return x.id === v.id; })[0];
+    return [f ? f.name : 'Папка', 'Файл появится у всех коллег'];
+  }
+
+  function selectView(kind, id) {
+    state.view = { kind: kind, id: id };
+    state.page = 1;
+    state.files = [];
+    state.selection = {};
+    var t = viewTitle();
+    $('groupTitle').textContent = t[0];
+    $('groupDesc').textContent = t[1];
+    $('bulkBar').hidden = kind !== 'mine';
+    renderNav();
+    loadFiles(false);
+  }
+
+  // ---------- список файлов ----------
+  function filesQuery(page) {
+    var p = '/api/files?page=' + page;
+    var v = state.view;
+    if (v.kind === 'folder') p += '&folder=' + encodeURIComponent(v.id);
+    else if (v.kind === 'root') p += '&folder=root';
+    if (v.kind === 'mine') p += '&mine=1';
+    if (state.q) p += '&q=' + encodeURIComponent(state.q);
+    return p;
+  }
+
+  function loadFiles(append) {
+    return api('GET', filesQuery(state.page)).then(function (d) {
+      state.total = d.total;
+      state.hasMore = d.hasMore;
+      state.files = append ? state.files.concat(d.files) : d.files;
+      renderFiles();
+      $('loadMoreWrap').hidden = !d.hasMore;
+    }).catch(function (e) { if (e.message !== 'unauthorized') toast(e.message, true); });
+  }
+
+  function refreshFolders() {
+    return api('GET', '/api/folders').then(function (d) {
+      state.folders = d.folders;
+      state.rootCount = d.rootCount;
+      renderNav();
+    });
+  }
+
+  var FILE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z"/><path d="M13 3v7h7"/></svg>';
+  var EYE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var DL_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12"/><path d="m6 10 6 6 6-6"/><path d="M4 20h16"/></svg>';
+  var TRASH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+
+  function renderFiles() {
+    if (state.files.length === 0) {
+      filesList.innerHTML = '<div class="empty"><div class="empty-title">Пока пусто</div><p>'
+        + (state.q ? 'Ничего не найдено по запросу «' + esc(state.q) + '».'
+                   : 'Загрузите первый файл — он появится у всех коллег.') + '</p></div>';
       return;
     }
-    const f = files[i];
-    label.textContent = 'Загружается: ' + f.name + (total > 1 ? ' (' + (i + 1) + ' из ' + total + ')' : '');
-    const url = '/api/upload?group=' + encodeURIComponent(state.currentGroup) +
-      '&uploader=' + encodeURIComponent(state.userName) +
-      '&name=' + encodeURIComponent(f.name);
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', url);
+    var mine = state.view.kind === 'mine';
+    var html = '';
+    state.files.forEach(function (f) {
+      var ext = extOf(f.name);
+      html += '<div class="file-row" data-id="' + f.id + '">'
+        + (mine ? '<label class="file-check"><input type="checkbox" data-check="' + f.id + '"' + (state.selection[f.id] ? ' checked' : '') + ' aria-label="Выбрать файл"></label>' : '')
+        + '<div class="file-icon">' + FILE_ICON + (ext ? '<span class="file-ext">' + esc(ext) + '</span>' : '') + '</div>'
+        + '<div class="file-info">'
+        +   '<div class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</div>'
+        +   '<div class="file-meta"><span>' + esc(f.uploader) + '</span>'
+        +     '<span class="dot">' + fmtSize(f.size) + '</span>'
+        +     '<span class="dot">' + fmtDate(f.uploadedAt) + '</span>'
+        +     (f.folderName ? '<span class="dot">' + esc(f.folderName) + '</span>' : '')
+        +   '</div>'
+        + '</div>'
+        + '<div class="file-actions">'
+        +   (f.preview !== 'none' ? '<button class="action-btn preview" data-preview="' + f.id + '">' + EYE_ICON + '<span>Открыть</span></button>' : '')
+        +   '<a class="action-btn download" href="/api/files/' + f.id + '/download">' + DL_ICON + '<span>Скачать</span></a>'
+        +   (f.canDelete ? '<button class="action-btn delete" data-del="' + f.id + '" data-name="' + esc(f.name) + '">' + TRASH_ICON + '<span>Удалить</span></button>' : '')
+        + '</div>'
+        + '</div>';
+    });
+    filesList.innerHTML = html;
+
+    filesList.querySelectorAll('[data-del]').forEach(function (b) {
+      b.addEventListener('click', function () { askDeleteFile(b.getAttribute('data-del'), b.getAttribute('data-name')); });
+    });
+    filesList.querySelectorAll('[data-preview]').forEach(function (b) {
+      b.addEventListener('click', function () { openPreview(b.getAttribute('data-preview')); });
+    });
+    filesList.querySelectorAll('[data-check]').forEach(function (c) {
+      c.addEventListener('change', function () {
+        if (c.checked) state.selection[c.getAttribute('data-check')] = true;
+        else delete state.selection[c.getAttribute('data-check')];
+        updateBulkBar();
+      });
+    });
+    updateBulkBar();
+  }
+
+  // ---------- массовое удаление ----------
+  function selectedIds() { return Object.keys(state.selection); }
+  function updateBulkBar() {
+    if (state.view.kind !== 'mine') return;
+    var n = selectedIds().length;
+    $('bulkCount').textContent = 'Выбрано: ' + n;
+    $('bulkDelete').disabled = n === 0;
+  }
+
+  function initBulk() {
+    $('bulkAll').addEventListener('change', function () {
+      var on = $('bulkAll').checked;
+      state.selection = {};
+      if (on) state.files.forEach(function (f) { state.selection[f.id] = true; });
+      renderFiles();
+    });
+    $('bulkDelete').addEventListener('click', function () {
+      var ids = selectedIds();
+      if (!ids.length) return;
+      askConfirm(
+        'Удалить выбранные файлы?',
+        'Будет удалено файлов: ' + ids.length + '. Действие необратимо.',
+        'Удалить',
+        function () {
+          api('POST', '/api/files/bulk-delete', { ids: ids }).then(function (d) {
+            toast('Удалено файлов: ' + d.deleted + (d.denied ? ', отказано: ' + d.denied : ''));
+            state.selection = {};
+            $('bulkAll').checked = false;
+            state.page = 1;
+            loadFiles(false);
+            refreshFolders();
+          }).catch(function (e) { toast(e.message, true); });
+        });
+    });
+  }
+
+  // ---------- загрузка ----------
+  function currentFolderParam() {
+    var v = state.view;
+    if (v.kind === 'folder') return v.id;
+    if (v.kind === 'root') return 'root';
+    // «Все файлы» и «Мои файлы» — загружаем в корень
+    return 'root';
+  }
+
+  var uploadQueue = [];
+  var uploading = false;
+  var uploadedCount = 0;
+
+  function enqueueUploads(fileList) {
+    var files = Array.prototype.slice.call(fileList);
+    if (!files.length) return;
+    uploadQueue = uploadQueue.concat(files);
+    if (!uploading) {
+      uploadedCount = 0;
+      $('progress').hidden = false;
+      pumpQueue();
+    }
+  }
+
+  function pumpQueue() {
+    var file = uploadQueue.shift();
+    if (!file) {
+      uploading = false;
+      $('progress').hidden = true;
+      $('progressBar').style.width = '0%';
+      state.page = 1;
+      loadFiles(false);
+      refreshFolders();
+      if (uploadedCount > 0) {
+        toast(uploadedCount === 1 ? 'Файл загружен' : 'Загружено файлов: ' + uploadedCount);
+        if (window.obmenFirework) window.obmenFirework();
+      }
+      return;
+    }
+    uploading = true;
+    $('progressLabel').textContent = 'Загрузка: ' + file.name;
+    var xhr = new XMLHttpRequest();
+    xhr.open('PUT', '/api/upload?folder=' + encodeURIComponent(currentFolderParam()) + '&name=' + encodeURIComponent(file.name));
+    xhr.setRequestHeader('X-CSRF-Token', state.me.csrf);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) bar.style.width = Math.round((i + e.loaded / e.total) / total * 100) + '%';
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) $('progressBar').style.width = Math.round(e.loaded / e.total * 100) + '%';
     };
-    xhr.onload = () => {
-      if (xhr.status === 401) { location.href = '/login.html'; return; }
-      if (xhr.status === 201) { i++; sendNext(); return; }
-      let msg = 'Ошибка загрузки';
-      try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
-      prog.hidden = true; $('#uploadBtn').disabled = false;
-      toast(msg, true);
+    xhr.onload = function () {
+      if (xhr.status === 201) {
+        uploadedCount++;
+      } else {
+        var msg = 'Не удалось загрузить «' + file.name + '»';
+        try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e) {}
+        toast(msg, true);
+      }
+      pumpQueue();
     };
-    xhr.onerror = () => { prog.hidden = true; $('#uploadBtn').disabled = false; toast('Сеть недоступна', true); };
-    xhr.send(f);
+    xhr.onerror = function () {
+      toast('Сеть недоступна при загрузке «' + file.name + '»', true);
+      pumpQueue();
+    };
+    xhr.send(file);
   }
-  sendNext();
-}
 
-/* ===== Удаление ===== */
-let pendingDelete = null;
-function askDelete(id) {
-  const f = state.files.find(x => x.id === id);
-  if (!f) return;
-  pendingDelete = id;
-  $('#confirmText').textContent = '«' + f.name + '» будет удалён для всех пользователей.';
-  $('#confirmModal').hidden = false;
-  $('#confirmOk').focus();
-}
-async function doDelete() {
-  $('#confirmModal').hidden = true;
-  if (!pendingDelete) return;
-  try {
-    await api('/api/files/' + pendingDelete, { method: 'DELETE', headers: { 'X-User': encodeURIComponent(state.userName) } });
-    toast('Файл удалён');
-    loadGroups(); loadFiles(true);
-  } catch (e) { toast(e.message, true); }
-  pendingDelete = null;
-}
-
-/* ===== Модалка имени ===== */
-let nameThen = null;
-function openNameModal(then) {
-  nameThen = then || null;
-  $('#nameInput').value = state.userName;
-  $('#nameModal').hidden = false;
-  setTimeout(() => $('#nameInput').focus(), 50);
-}
-function saveName() {
-  const v = $('#nameInput').value.trim();
-  if (!v) { $('#nameInput').focus(); return; }
-  state.userName = v.slice(0, 60);
-  localStorage.setItem('lan-share-name', state.userName);
-  $('#nameModal').hidden = true;
-  renderUser(); renderFiles();
-  const cb = nameThen; nameThen = null;
-  if (cb) cb();
-}
-
-/* ===== Тема ===== */
-function applyTheme(t) {
-  document.documentElement.dataset.theme = t;
-  localStorage.setItem('lan-share-theme', t);
-}
-applyTheme(localStorage.getItem('lan-share-theme') ||
-  (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-
-/* ===== События ===== */
-document.addEventListener('click', (e) => {
-  const gb = e.target.closest('[data-group]');
-  if (gb) selectGroup(gb.dataset.group);
-  const del = e.target.closest('[data-del]');
-  if (del) askDelete(del.dataset.del);
-});
-$('#uploadBtn').addEventListener('click', () => ensureName(() => $('#fileInput').click()));
-$('#dropzone').addEventListener('click', () => ensureName(() => $('#fileInput').click()));
-$('#dropzone').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ensureName(() => $('#fileInput').click()); }
-});
-$('#fileInput').addEventListener('change', (e) => { uploadFiles(e.target.files); e.target.value = ''; });
-
-const main = $('#main');
-['dragenter', 'dragover'].forEach(ev => main.addEventListener(ev, (e) => {
-  e.preventDefault(); $('#dropzone').classList.add('dragover');
-}));
-['dragleave', 'drop'].forEach(ev => main.addEventListener(ev, (e) => {
-  e.preventDefault();
-  if (ev === 'dragleave' && e.relatedTarget && main.contains(e.relatedTarget)) return;
-  $('#dropzone').classList.remove('dragover');
-}));
-main.addEventListener('drop', (e) => {
-  if (e.dataTransfer?.files?.length) ensureName(() => uploadFiles(e.dataTransfer.files));
-});
-
-$('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; renderFiles(); });
-$('#userChip').addEventListener('click', () => openNameModal());
-$('#nameSave').addEventListener('click', saveName);
-$('#nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveName(); });
-$('#confirmOk').addEventListener('click', doDelete);
-$('#confirmCancel').addEventListener('click', () => { $('#confirmModal').hidden = true; pendingDelete = null; });
-$('#confirmModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) { e.currentTarget.hidden = true; pendingDelete = null; } });
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    $('#confirmModal').hidden = true; pendingDelete = null;
-    $('#qrModal').hidden = true;
+  function initUpload() {
+    var dz = $('dropzone'), fi = $('fileInput');
+    $('uploadBtn').addEventListener('click', function () { fi.click(); });
+    dz.addEventListener('click', function () { fi.click(); });
+    dz.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi.click(); } });
+    fi.addEventListener('change', function () { enqueueUploads(fi.files); fi.value = ''; });
+    ['dragenter', 'dragover'].forEach(function (ev) {
+      dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add('dragover'); });
+    });
+    ['dragleave', 'drop'].forEach(function (ev) {
+      dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove('dragover'); });
+    });
+    dz.addEventListener('drop', function (e) {
+      if (e.dataTransfer && e.dataTransfer.files) enqueueUploads(e.dataTransfer.files);
+    });
   }
-});
-$('#themeToggle').addEventListener('click', () => {
-  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
-});
 
-/* ===== QR-модалка ===== */
-let shareUrl = '';
-async function openQr() {
-  try {
-    const info = await api('/api/server-info');
-    const host = (info.ips && info.ips[0]) || location.hostname;
-    shareUrl = 'http://' + host + ':' + info.port;
-  } catch {
-    shareUrl = location.origin;
+  // ---------- предпросмотр ----------
+  function openPreview(id) {
+    var f = state.files.filter(function (x) { return x.id === id; })[0];
+    if (!f) return;
+    $('previewTitle').textContent = f.name;
+    var body = $('previewBody');
+    body.innerHTML = '<div class="preview-loading">Загрузка…</div>';
+    openModal('previewModal');
+    var url = '/api/files/' + id + '/preview';
+    if (f.preview === 'image') {
+      var img = new Image();
+      img.className = 'preview-img';
+      img.alt = f.name;
+      img.onload = function () { body.innerHTML = ''; body.appendChild(img); };
+      img.onerror = function () { body.innerHTML = '<div class="preview-loading">Не удалось показать изображение</div>'; };
+      img.src = url;
+    } else if (f.preview === 'pdf') {
+      body.innerHTML = '';
+      var fr = document.createElement('iframe');
+      fr.className = 'preview-frame';
+      fr.src = url;
+      fr.title = f.name;
+      body.appendChild(fr);
+    } else if (f.preview === 'text') {
+      fetch(url, { credentials: 'same-origin' }).then(function (r) {
+        if (!r.ok) throw new Error('preview ' + r.status);
+        return r.text();
+      }).then(function (text) {
+        var pre = document.createElement('pre');
+        pre.className = 'preview-text';
+        pre.textContent = text.slice(0, 200000); // только textContent — никакого HTML
+        body.innerHTML = '';
+        body.appendChild(pre);
+      }).catch(function () {
+        body.innerHTML = '<div class="preview-loading">Не удалось показать файл</div>';
+      });
+    }
   }
-  $('#qrUrl').textContent = shareUrl;
-  const box = $('#qrBox');
-  box.innerHTML = '';
-  try {
-    const qr = qrcode(0, 'M');
-    qr.addData(shareUrl);
-    qr.make();
-    const img = document.createElement('img');
-    img.src = qr.createDataURL(5, 4);
-    img.alt = 'QR-код адреса обменника';
-    box.appendChild(img);
-  } catch {
-    box.textContent = 'Не удалось построить QR-код';
-  }
-  $('#qrModal').hidden = false;
-  $('#qrClose').focus();
-}
-$('#qrBtn').addEventListener('click', openQr);
-$('#qrBtnMobile').addEventListener('click', openQr);
-$('#qrClose').addEventListener('click', () => { $('#qrModal').hidden = true; });
-$('#qrModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.hidden = true; });
-$('#copyUrlBtn').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(shareUrl); toast('Ссылка скопирована'); }
-  catch {
-    const t = document.createElement('textarea');
-    t.value = shareUrl; document.body.appendChild(t); t.select();
-    document.execCommand('copy'); t.remove();
-    toast('Ссылка скопирована');
-  }
-});
 
-/* ===== Старт ===== */
-renderUser();
-(async () => {
-  try { await loadGroups(); } catch (e) { toast('Сервер недоступен: ' + e.message, true); }
-  await loadFiles();
-  if (!state.userName) openNameModal();
+  // ---------- удаление ----------
+  var confirmAction = null;
+  function askConfirm(title, text, okLabel, fn) {
+    $('confirmTitle').textContent = title;
+    $('confirmText').textContent = text;
+    $('confirmOk').textContent = okLabel;
+    confirmAction = fn;
+    openModal('confirmModal');
+  }
+  function askDeleteFile(id, name) {
+    askConfirm('Удалить файл?', '«' + name + '» исчезнет у всех коллег. Действие необратимо.', 'Удалить', function () {
+      api('DELETE', '/api/files/' + id).then(function () {
+        toast('Файл удалён');
+        state.page = 1;
+        loadFiles(false);
+        refreshFolders();
+      }).catch(function (e) { toast(e.message, true); });
+    });
+  }
+  function askDeleteFolder(id) {
+    var f = state.folders.filter(function (x) { return x.id === id; })[0];
+    if (!f) return;
+    askConfirm('Удалить папку?', '«' + f.name + '» будет удалена, файлы переедут в раздел «Без папки».', 'Удалить папку', function () {
+      api('DELETE', '/api/folders/' + id).then(function () {
+        toast('Папка удалена');
+        if (state.view.kind === 'folder' && state.view.id === id) {
+          selectView('all', null);
+        }
+        refreshFolders();
+      }).catch(function (e) { toast(e.message, true); });
+    });
+  }
+
+  // ---------- папки (admin) ----------
+  function initFolders() {
+    $('folderSave').addEventListener('click', createFolder);
+    $('folderInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') createFolder(); });
+    $('folderCancel').addEventListener('click', function () { closeModal('folderModal'); });
+    function createFolder() {
+      var name = $('folderInput').value.trim();
+      if (name.length < 2) { toast('Название папки — минимум 2 символа', true); return; }
+      api('POST', '/api/folders', { name: name }).then(function () {
+        toast('Папка «' + name + '» создана');
+        $('folderInput').value = '';
+        closeModal('folderModal');
+        refreshFolders();
+      }).catch(function (e) { toast(e.message, true); });
+    }
+  }
+
+  // ---------- модалки ----------
+  function openModal(id) { $(id).hidden = false; }
+  function closeModal(id) {
+    $(id).hidden = true;
+    if (id === 'previewModal') $('previewBody').innerHTML = '';
+  }
+  function initModals() {
+    $('confirmOk').addEventListener('click', function () {
+      closeModal('confirmModal');
+      if (confirmAction) { var fn = confirmAction; confirmAction = null; fn(); }
+    });
+    $('confirmCancel').addEventListener('click', function () { closeModal('confirmModal'); });
+    $('previewClose').addEventListener('click', function () { closeModal('previewModal'); });
+    document.querySelectorAll('.modal-backdrop').forEach(function (b) {
+      b.addEventListener('click', function (e) { if (e.target === b) closeModal(b.id); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        ['confirmModal', 'folderModal', 'previewModal', 'qrModal'].forEach(function (id) {
+          if (!$(id).hidden) closeModal(id);
+        });
+      }
+    });
+  }
+
+  // ---------- QR ----------
+  function initQr() {
+    function showQr() {
+      api('GET', '/api/server-info').then(function (d) {
+        var host = location.hostname;
+        var url;
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(host) && host !== '127.0.0.1') url = location.origin + '/';
+        else url = (d.addresses && d.addresses[0]) || (location.origin + '/');
+        $('qrUrl').textContent = url;
+        var box = $('qrBox');
+        box.innerHTML = '';
+        if (typeof QRCode !== 'undefined') {
+          new QRCode(box, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+        }
+        openModal('qrModal');
+      }).catch(function (e) { toast(e.message, true); });
+    }
+    $('qrBtn').addEventListener('click', showQr);
+    $('qrBtnMobile').addEventListener('click', showQr);
+    $('qrClose').addEventListener('click', function () { closeModal('qrModal'); });
+    $('copyUrlBtn').addEventListener('click', function () {
+      var url = $('qrUrl').textContent;
+      if (navigator.clipboard) navigator.clipboard.writeText(url).then(function () { toast('Ссылка скопирована'); });
+    });
+  }
+
+  // ---------- поиск ----------
+  function initSearch() {
+    var timer = null;
+    $('searchInput').addEventListener('input', function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        state.q = $('searchInput').value.trim();
+        state.page = 1;
+        loadFiles(false);
+      }, 300);
+    });
+  }
+
+  function initLoadMore() {
+    $('loadMoreBtn').addEventListener('click', function () {
+      state.page++;
+      loadFiles(true);
+    });
+  }
+
+  // ---------- вход/выход ----------
+  function initUser() {
+    $('logoutBtn').addEventListener('click', function () {
+      api('POST', '/api/logout').catch(function () {}).then(function () {
+        try { sessionStorage.removeItem('obmen_csrf'); } catch (e) {}
+        location.href = '/login.html';
+      });
+    });
+  }
+
+  // ---------- запуск ----------
+  function boot() {
+    initTheme();
+    api('GET', '/api/me').then(function (me) {
+      state.me = me;
+      try { sessionStorage.setItem('obmen_csrf', me.csrf); } catch (e) {}
+      $('userName').textContent = me.username;
+      $('userAvatar').textContent = me.username.slice(0, 1).toUpperCase();
+      $('userChip').title = me.username + (me.role === 'admin' ? ' · администратор' : '');
+      if (me.role === 'admin') $('roleBadge').hidden = false;
+
+      initModals();
+      initUpload();
+      initBulk();
+      initFolders();
+      initQr();
+      initSearch();
+      initLoadMore();
+      initUser();
+
+      refreshFolders().then(function () { selectView('all', null); });
+    }).catch(function (e) {
+      if (e.message !== 'unauthorized') toast(e.message, true);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', boot);
 })();
-setInterval(() => { loadGroups().catch(() => {}); loadFiles(true); }, 4000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadGroups().catch(() => {}); loadFiles(true); } });

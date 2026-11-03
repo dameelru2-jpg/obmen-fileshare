@@ -1,28 +1,31 @@
 @echo off
 cd /d "%~dp0"
+title Обмен - файлообменник офиса
+chcp 65001 >nul
 
-set "NODE=node"
-where node >nul 2>nul
-if %errorlevel%==0 goto run
-
-set "KIMI_EXE=%LOCALAPPDATA%\Programs\Kimi\Kimi.exe"
-if exist "%KIMI_EXE%" (
-  set "NODE=%KIMI_EXE%"
-  set ELECTRON_RUN_AS_NODE=1
-  goto run
+if exist "Obmen.exe" (
+  echo Запуск файлообменника... Окно можно свернуть, но не закрывать.
+  echo Чтобы остановить сервер, закройте окно Obmen или нажмите Ctrl+C в нём.
+  start "" "Obmen.exe"
+  exit /b 0
 )
 
-echo [Ошибка] Node.js не найден на этом компьютере.
-echo Установите Node.js с сайта https://nodejs.org и запустите этот файл снова.
-echo.
+where python >nul 2>nul
+if %errorlevel%==0 (
+  echo Запуск через Python...
+  python server.py
+  pause
+  exit /b 0
+)
+
+where node >nul 2>nul
+if %errorlevel%==0 (
+  echo Запуск через Node.js...
+  node server.js
+  pause
+  exit /b 0
+)
+
+echo [Ошибка] Не найден ни Obmen.exe, ни Python, ни Node.js.
 pause
 exit /b 1
-
-:run
-title Обмен - файлообменник офиса
-echo Запуск файлообменника... Окно можно свернуть, но не закрывать.
-echo Чтобы остановить сервер, закройте это окно или нажмите Ctrl+C.
-echo.
-chcp 65001 >nul
-"%NODE%" server.js
-pause
