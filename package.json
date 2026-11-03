@@ -1,0 +1,16 @@
+{
+  "name": "lan-fileshare",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Локальный файлообменник для офисной сети",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^2.5.0",
+    "qrcode-generator": "^1.5.2"
+  }
+}
